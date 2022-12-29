@@ -1,0 +1,259 @@
+﻿@page "/"
+@using Blazor.Extensions;
+@using Blazor.Extensions.Canvas
+@using Blazor.Extensions.Canvas.Canvas2D;
+
+<div>
+    <input id="radioRect" name="radio" type="radio" value="rectangle" checked="true" @onchange="RadioOnChange" /><label for="radioRect">四角</label>
+    <input id="radioCircle" name="radio" type="radio" value="circle" @onchange="RadioOnChange" /><label for="radioCircle">丸</label>
+</div>
+<div tabindex="0" @onmousedown="OnMouseDown" @onmousemove="OnMouseMove">
+    <BECanvas Width="800" Height="600" @ref="_canvasReference"></BECanvas>
+</div>
+@code {
+    private enum ShapeType
+    {
+        rectangle,
+        circle
+    }
+    private Canvas2DContext _context;
+
+    protected BECanvasComponent _canvasReference;
+
+    private readonly ColorSelector _colorSelector = new ColorSelector(ColorSelector.Color.Red);
+    private readonly Shapes _shapes = new Shapes();
+
+    private Point _mousePos;
+    private ShapeType _shapeType;
+
+    protected override async Task OnAfterRenderAsync(bool firstRender)
+    {
+        _context = await _canvasReference.CreateCanvas2DAsync();
+        await _context.SetFillStyleAsync("black");
+        await _context.FillRectAsync(0, 0, _canvasReference.Width, _canvasReference.Height);
+        _shapes.DrawAsync(_context, _mousePos);
+    }
+
+    private void RadioOnChange(ChangeEventArgs e)
+    {
+        _shapeType = (ShapeType)Enum.Parse(typeof(ShapeType), (string)(e.Value));
+    }
+
+    private void OnMouseMove(MouseEventArgs e)
+    {
+        _mousePos = new Point(e.OffsetX, e.OffsetY);
+    }
+
+    private void OnMouseDown(MouseEventArgs e)
+    {
+        var currentColor = _colorSelector.Current();
+        if (e.Button == 0)
+        {
+            var pos = new Point(e.OffsetX, e.OffsetY);
+            _shapes.Add(CreateShape(pos, currentColor));
+            _colorSelector.Next();
+        }
+        else if (e.Button == 2)
+        {
+
+        }
+    }
+
+    private Shape CreateShape(Point pt, string color)
+    {
+        switch (_shapeType)
+        {
+            case ShapeType.rectangle:
+                return new Rectangle(pt, color);
+            case ShapeType.circle:
+                return new Circle(pt, color);
+            default:
+                throw new InvalidOperationException();
+        }
+    }
+
+    internal record Point(double X, double Y);
+
+    internal class ColorSelector
+    {
+        public enum Color
+        {
+            Red,
+            Yellow,
+            Blue
+        }
+        private Color _current;
+        public ColorSelector(Color defaultColor)
+        {
+            _current = defaultColor;
+        }
+
+        public string Current() => _current.ToString().ToLower();
+
+        public string Next()
+        {
+            switch (_current)
+            {
+                case Color.Red:
+                    _current = Color.Yellow;
+                    return "yellow";
+                case Color.Yellow:
+                    _current = Color.Blue;
+                    return "blue";
+                case Color.Blue:
+                    _current = Color.Red;
+                    return "red";
+                default:
+                    throw new InvalidOperationException();
+            }
+        }
+        public string Prev()
+        {
+            switch (_current)
+            {
+                case Color.Blue:
+                    _current = Color.Yellow;
+                    return "yellow";
+                case Color.Red:
+                    _current = Color.Blue;
+                    return "blue";
+                case Color.Yellow:
+                    _current = Color.Red;
+                    return "red";
+                default:
+                    throw new InvalidOperationException();
+            }
+        }
+    }
+
+    internal class Shapes
+    {
+        private List<Shape> _list;
+
+        public Shapes()
+        {
+            _list = new List<Shape>();
+        }
+        public void Add(Shape s)
+        {
+            if (10 <= _list.Count)
+            {
+                _list.RemoveAt(0);
+            }
+            _list.Add(s);
+        }
+        public void Clear() => _list.Clear();
+
+        public async void DrawAsync(Canvas2DContext context, Point pt)
+        {
+            await HitTest(context, pt);
+            foreach (var e in _list)
+            {
+                await e.DrawAsync(context);
+                if (e.Equals(_hover))
+                {
+                    await e.DrawStrokeAsync(context);
+                }
+            }
+        }
+
+        private Shape? _hover;
+        private async Task HitTest(Canvas2DContext context, Point pt)
+        {
+            _list.Reverse();
+            try
+            {
+                foreach (var e in _list)
+                {
+                    if (await e.HitTestAsync(context, pt))
+                    {
+                        _hover = e;
+                        return;
+                    }
+                }
+                _hover = null;
+            }
+            finally
+            {
+                _list.Reverse();
+            }
+        }
+    }
+
+    internal abstract class Shape
+    {
+        protected Point Pos { get; }
+        protected string Color { get; }
+
+        protected Shape(Point pos, string color)
+        {
+            Pos = pos;
+            Color = color;
+        }
+
+        public abstract Task<bool> HitTestAsync(Canvas2DContext context, Point pt);
+        public abstract Task DrawAsync(Canvas2DContext context);
+        public abstract Task DrawStrokeAsync(Canvas2DContext context);
+    }
+
+    internal class Rectangle : Shape
+    {
+        public Rectangle(Point pos, string color)
+        : base(pos, color)
+        {
+        }
+
+        public override async Task DrawAsync(Canvas2DContext context)
+        {
+            await context.SetFillStyleAsync(Color);
+            await context.FillRectAsync(Pos.X - 16, Pos.Y - 16, 32, 32);
+        }
+        public override async Task DrawStrokeAsync(Canvas2DContext context)
+        {
+            await context.SetStrokeStyleAsync("white");
+            await context.StrokeRectAsync(Pos.X - 16, Pos.Y - 16, 32, 32);
+        }
+        public override async Task<bool> HitTestAsync(Canvas2DContext context, Point pt)
+        {
+            await context.BeginPathAsync();
+            await context.RectAsync(Pos.X - 16, Pos.Y - 16, 32, 32);
+            await context.ClosePathAsync();
+            return await context.IsPointInPathAsync(pt.X, pt.Y);
+        }
+    }
+
+    internal class Circle : Shape
+    {
+        public Circle(Point pos, string color)
+        : base(pos, color)
+        {
+        }
+
+        public override async Task DrawAsync(Canvas2DContext context)
+        {
+            await context.SetFillStyleAsync(Color);
+            await CreatePathAsync(context);
+            await context.FillAsync();
+        }
+
+        public override async Task DrawStrokeAsync(Canvas2DContext context)
+        {
+            await context.SetStrokeStyleAsync("white");
+            await CreatePathAsync(context);
+            await context.StrokeAsync();
+        }
+
+        public override async Task<bool> HitTestAsync(Canvas2DContext context, Point pt)
+        {
+            await CreatePathAsync(context);
+            return await context.IsPointInPathAsync(pt.X, pt.Y);
+        }
+
+        private async Task CreatePathAsync(Canvas2DContext context)
+        {
+            await context.BeginPathAsync();
+            await context.ArcAsync(Pos.X, Pos.Y, 16, 0, Math.PI * 2);
+            await context.ClosePathAsync();
+        }
+    }
+}
